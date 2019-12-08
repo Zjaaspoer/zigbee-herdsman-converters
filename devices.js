@@ -5955,6 +5955,13 @@ const devices = [
         fromZigbee: [fz.ts0043_click],
         toZigbee: [],
     },
+    {
+        zigbeeModel: ['HML005'],
+        model: '31154',
+        vendor: 'Philips',
+        description: 'Hue Table Light',
+        extend: hue.light_onoff_brightness,
+    },
 ];
 
 module.exports = devices.map((device) =>
