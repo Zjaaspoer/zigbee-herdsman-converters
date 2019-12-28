@@ -108,25 +108,23 @@ const ictcg1 = (model, msg, publish, options, action) => {
         const direction = msg.data.movemode === 1 ? 'left' : 'right';
         s.direction = direction;
         payload.action = `rotate_${direction}`;
-    } else if (action === 'stop' || action === 'level') {
-        if (action === 'level') {
-            s.value = msg.data.level;
-            const direction = s.value === 0 ? 'left' : 'right';
-            payload.action = `rotate_${direction}_quick`;
-            payload.brightness = s.value;
-        } else {
-            if (s.direction) {
-                const duration = Date.now() - s.since;
-                const delta = Math.round(rate * (duration / 10) * (s.direction === 'left' ? -1 : 1));
-                const newValue = s.value + delta;
-                if (newValue >= 0 && newValue <= 255) {
-                    s.value = newValue;
-                }
+    } else if (action === 'level') {
+        s.value = msg.data.level;
+        const direction = s.value === 0 ? 'left' : 'right';
+        payload.action = `rotate_${direction}_quick`;
+        payload.brightness = s.value;
+    } else if (action === 'stop') {
+        if (s.direction) {
+            const duration = Date.now() - s.since;
+            const delta = Math.round(rate * (duration / 10) * (s.direction === 'left' ? -1 : 1));
+            const newValue = s.value + delta;
+            if (newValue >= 0 && newValue <= 255) {
+                s.value = newValue;
             }
-            payload.action = 'rotate_stop';
-            payload.brightness = s.value;
-            s.direction = false;
         }
+        payload.action = 'rotate_stop';
+        payload.brightness = s.value;
+        s.direction = false;
     }
     if (s.timerId) {
         clearInterval(s.timerId);
@@ -145,7 +143,7 @@ const ictcg1 = (model, msg, publish, options, action) => {
             s.publish(payload);
         }, 200);
     }
-    s.publish(payload);
+    return payload.brightness;
 };
 
 const ratelimitedDimmer = (model, msg, publish, options) => {
@@ -273,17 +271,17 @@ const converters = {
             const payload = {};
             if (msg.data.hasOwnProperty('activePower')) {
                 const multiplier = msg.endpoint.getClusterAttributeValue(
-                    'haElectricalMeasurement', 'acPowerMultiplier'
+                    'haElectricalMeasurement', 'acPowerMultiplier',
                 );
                 const divisor = msg.endpoint.getClusterAttributeValue(
-                    'haElectricalMeasurement', 'acPowerDivisor'
+                    'haElectricalMeasurement', 'acPowerDivisor',
                 );
                 const factor = multiplier && divisor ? multiplier / divisor : 1;
                 payload.power = precisionRound(msg.data['activePower'] * factor, 2);
             }
             if (msg.data.hasOwnProperty('rmsCurrent')) {
                 const multiplier = msg.endpoint.getClusterAttributeValue(
-                    'haElectricalMeasurement', 'acCurrentMultiplier'
+                    'haElectricalMeasurement', 'acCurrentMultiplier',
                 );
                 const divisor = msg.endpoint.getClusterAttributeValue('haElectricalMeasurement', 'acCurrentDivisor');
                 const factor = multiplier && divisor ? multiplier / divisor : 1;
@@ -291,7 +289,7 @@ const converters = {
             }
             if (msg.data.hasOwnProperty('rmsVoltage')) {
                 const multiplier = msg.endpoint.getClusterAttributeValue(
-                    'haElectricalMeasurement', 'acVoltageMultiplier'
+                    'haElectricalMeasurement', 'acVoltageMultiplier',
                 );
                 const divisor = msg.endpoint.getClusterAttributeValue('haElectricalMeasurement', 'acVoltageDivisor');
                 const factor = multiplier && divisor ? multiplier / divisor : 1;
@@ -388,7 +386,7 @@ const converters = {
      * Device specific converters, not recommended for re-use.
      * TODO: This has not been fully sorted out yet.
      */
-    HS2SK_power: {
+    HS2SK_SKHMP30I1_power: {
         cluster: 'haElectricalMeasurement',
         type: ['attributeReport', 'readResponse'],
         convert: (model, msg, publish, options) => {
@@ -1635,13 +1633,15 @@ const converters = {
         cluster: 'genPowerCfg',
         type: ['attributeReport', 'readResponse'],
         convert: (model, msg, publish, options) => {
-            const battery = {max: 3000, min: 2500};
-            const voltage = msg.data['batteryVoltage'] * 100;
-            return {
-                battery: toPercentage(voltage, battery.min, battery.max),
-                voltage: voltage, // @deprecated
-                // voltage: voltage / 1000.0,
-            };
+            if (msg.data.hasOwnProperty('batteryVoltage')) {
+                const battery = {max: 3000, min: 2500};
+                const voltage = msg.data['batteryVoltage'] * 100;
+                return {
+                    battery: toPercentage(voltage, battery.min, battery.max),
+                    voltage: voltage, // @deprecated
+                    // voltage: voltage / 1000.0,
+                };
+            }
         },
     },
     battery_3V_2100: {
@@ -1855,25 +1855,25 @@ const converters = {
         cluster: 'genLevelCtrl',
         type: 'commandStop',
         convert: (model, msg, publish, options) => {
-            ictcg1(model, msg, publish, options, 'stop');
-            return {action: `rotate_stop`};
+            const value = ictcg1(model, msg, publish, options, 'stop');
+            return {action: `rotate_stop`, brightness: value};
         },
     },
     cmd_stop_with_onoff: {
         cluster: 'genLevelCtrl',
         type: 'commandStopWithOnOff',
         convert: (model, msg, publish, options) => {
-            ictcg1(model, msg, publish, options, 'stop');
-            return {action: `rotate_stop`};
+            const value = ictcg1(model, msg, publish, options, 'stop');
+            return {action: `rotate_stop`, brightness: value};
         },
     },
     cmd_move_to_level_with_onoff: {
         cluster: 'genLevelCtrl',
         type: 'commandMoveToLevelWithOnOff',
         convert: (model, msg, publish, options) => {
-            ictcg1(model, msg, publish, options, 'level');
+            const value = ictcg1(model, msg, publish, options, 'level');
             const direction = msg.data.level === 0 ? 'left' : 'right';
-            return {action: `rotate_${direction}_quick`, level: msg.data.level};
+            return {action: `rotate_${direction}_quick`, level: msg.data.level, brightness: value};
         },
     },
     iris_3320L_contact: {
@@ -1994,7 +1994,7 @@ const converters = {
     },
     st_leak: {
         cluster: 'ssIasZone',
-        type: ['attributeReport', 'readResponse'],
+        type: ['attributeReport', 'commandStatusChangeNotification', 'readResponse'],
         convert: (model, msg, publish, options) => {
             const zoneStatus = msg.data.zonestatus;
             return {
@@ -2151,20 +2151,46 @@ const converters = {
         cluster: 'hvacThermostat',
         type: ['attributeReport', 'readResponse'],
         convert: (model, msg, publish, options) => {
-            const result = {};
+            const result = converters.thermostat_att_report.convert(model, msg, publish, options);
+            // system_mode is always 'heat', we set it below based on eurotronic_host_flags
+            if (result.system_mode) {
+                delete result['system_mode'];
+            }
             if (typeof msg.data[0x4003] == 'number') {
                 result.current_heating_setpoint =
                     precisionRound(msg.data[0x4003], 2) / 100;
             }
             if (typeof msg.data[0x4008] == 'number') {
-                result.eurotronic_system_mode = msg.data[0x4008];
-                if ((result.eurotronic_system_mode & 1 << 2) != 0) {
-                    result.system_mode = common.thermostatSystemModes[1]; // boost => auto
-                } else if ((result.eurotronic_system_mode & (1 << 4)) != 0 ) {
-                    result.system_mode = common.thermostatSystemModes[0]; // off
+                result.eurotronic_host_flags = msg.data[0x4008];
+                const resultHostFlags = {
+                    'mirror_display': false,
+                    'boost': false,
+                    'window_open': false,
+                    'child_protection': false,
+                };
+                if ((result.eurotronic_host_flags & 1 << 2) != 0) {
+                    // system_mode => 'heat', boost mode
+                    result.system_mode = common.thermostatSystemModes[4];
+                    resultHostFlags.boost = true;
+                } else if ((result.eurotronic_host_flags & (1 << 4)) != 0 ) {
+                    // system_mode => 'off', window open detected
+                    result.system_mode = common.thermostatSystemModes[0];
+                    resultHostFlags.window_open = true;
                 } else {
-                    result.system_mode = common.thermostatSystemModes[4]; // heat
+                    // system_mode => 'auto', default
+                    result.system_mode = common.thermostatSystemModes[1];
                 }
+                if ((result.eurotronic_host_flags & (1 << 1)) != 0 ) {
+                    // mirror_display
+                    resultHostFlags.mirror_display = true;
+                }
+                if ((result.eurotronic_host_flags & (1 << 7)) != 0 ) {
+                    // child protection
+                    resultHostFlags.child_protection = true;
+                }
+                // keep eurotronic_system_mode for compatibility (is there a way to mark this as deprecated?)
+                result.eurotronic_system_mode = result.eurotronic_host_flags;
+                result.eurotronic_host_flags = resultHostFlags;
             }
             if (typeof msg.data[0x4002] == 'number') {
                 result.eurotronic_error_status = msg.data[0x4002];
@@ -2249,9 +2275,9 @@ const converters = {
     },
     tint404011_scene: {
         cluster: 'genBasic',
-        type: 'commandWrite',
+        type: 'write',
         convert: (model, msg, publish, options) => {
-            return {action: `scene${msg.data[0].attrData}`};
+            return {action: `scene_${msg.data['16389']}`};
         },
     },
     tint404011_move_to_color_temp: {
@@ -3240,6 +3266,165 @@ const converters = {
                 step_size: msg.data.stepsize,
                 transition_time: msg.data.transtime,
             };
+        },
+    },
+    CCTSwitch_D0001_on_off: {
+        cluster: 'genOnOff',
+        type: ['commandOn', 'commandOff'],
+        convert: (model, msg, publish, options) => {
+            const cmd = msg.type === 'commandOn' ? 'on' : 'off';
+            return {click: 'power', action: cmd};
+        },
+    },
+    CCTSwitch_D0001_move_to_level_recall: {
+        cluster: 'genLevelCtrl',
+        type: ['commandMoveToLevel', 'commandMoveToLevelWithOnOff'],
+        convert: (model, msg, publish, options) => {
+            // wrap the messages from button2 and button4 into a single function
+            // button2 always sends "commandMoveToLevel"
+            // button4 sends two messages, with "commandMoveToLevelWithOnOff" coming first in the sequence
+            //         so that's the one we key off of to indicate "button4". we will NOT print it in that case,
+            //         instead it will be returned as part of the second sequence with
+            //         CCTSwitch_D0001_move_to_colortemp_recall below.
+
+            const deviceID = msg.device.ieeeAddr;
+            if (!store[deviceID]) {
+                store[deviceID] = {lastClk: null, lastSeq: -10, lastBrightness: null,
+                    lastMoveLevel: null, lastColorTemp: null};
+            }
+
+            let clk = 'brightness';
+            let cmd = null;
+            const payload = {brightness: msg.data.level, transition: parseFloat(msg.data.transtime/10.0)};
+            if ( msg.type == 'commandMoveToLevel' ) {
+                // pressing the brightness button increments/decrements from 13-254.
+                // when it reaches the end (254) it will start decrementing by a step,
+                // and vice versa.
+                const direction = msg.data.level > store[deviceID].lastBrightness ? 'up' : 'down';
+                cmd = `${clk}_${direction}`;
+                store[deviceID].lastBrightness = msg.data.level;
+            } else if ( msg.type == 'commandMoveToLevelWithOnOff' ) {
+                // This is the 'start' of the 4th button sequence.
+                clk = 'memory';
+                store[deviceID].lastMoveLevel = msg.data.level;
+                store[deviceID].lastClk = clk;
+            }
+
+            if ( clk != 'memory' ) {
+                store[deviceID].lastSeq = msg.meta.zclTransactionSequenceNumber;
+                store[deviceID].lastClk = clk;
+                payload.click = clk;
+                payload.action = cmd;
+                return payload;
+            }
+        },
+    },
+    CCTSwitch_D0001_move_to_colortemp_recall: {
+        cluster: 'lightingColorCtrl',
+        type: 'commandMoveToColorTemp',
+        convert: (model, msg, publish, options) => {
+            // both button3 and button4 send the command "commandMoveToColorTemp"
+            // in order to distinguish between the buttons, use the sequence number and the previous command
+            // to determine if this message was immediately preceded by "commandMoveToLevelWithOnOff"
+            // if this command follows a "commandMoveToLevelWithOnOff", then it's actually button4's second message
+            // and we can ignore it entirely
+            const deviceID = msg.device.ieeeAddr;
+            if (!store[deviceID]) {
+                store[deviceID] = {lastClk: null, lastSeq: -10, lastBrightness: null,
+                    lastMoveLevel: null, lastColorTemp: null};
+            }
+            const lastClk = store[deviceID].lastClk;
+            const lastSeq = store[deviceID].lastSeq;
+
+            const seq = msg.meta.zclTransactionSequenceNumber;
+            let clk = 'colortemp';
+            const payload = {color_temp: msg.data.colortemp, transition: parseFloat(msg.data.transtime/10.0)};
+
+            // because the remote sends two commands for button4, we need to look at the previous command and
+            // see if it was the recognized start command for button4 - if so, ignore this second command,
+            // because it's not really button3, it's actually button4
+            if ( lastClk == 'memory' ) {
+                payload.click = lastClk;
+                payload.action = 'recall';
+                payload.brightness = store[deviceID].lastMoveLevel;
+
+                // ensure the "last" message was really the message prior to this one
+                // accounts for missed messages (gap >1) and for the remote's rollover from 127 to 0
+                if ( (seq == 0 && lastSeq == 127 ) || ( seq - lastSeq ) == 1 ) {
+                    clk = null;
+                }
+            } else {
+                // pressing the color temp button increments/decrements from 153-370K.
+                // when it reaches the end (370) it will start decrementing by a step,
+                // and vice versa.
+                const direction = msg.data.colortemp > store[deviceID].lastColorTemp ? 'up' : 'down';
+                const cmd = `${clk}_${direction}`;
+                payload.click = clk;
+                payload.action = cmd;
+                store[deviceID].lastColorTemp = msg.data.colortemp;
+            }
+
+            if ( clk != null ) {
+                store[deviceID].lastSeq = msg.meta.zclTransactionSequenceNumber;
+                store[deviceID].lastClk = clk;
+                return payload;
+            }
+        },
+    },
+    CCTSwitch_D0001_brightness_updown_hold_release: {
+        cluster: 'genLevelCtrl',
+        type: ['commandMove', 'commandStop'],
+        convert: (model, msg, publish, options) => {
+            const deviceID = msg.device.ieeeAddr;
+            if (!store[deviceID]) {
+                store[deviceID] = {};
+            }
+            const stop = msg.type === 'commandStop' ? true : false;
+            let direction = null;
+            const clk = 'brightness';
+            const payload = {click: clk};
+            if (stop) {
+                direction = store[deviceID].direction;
+                const duration = Date.now() - store[deviceID].start;
+                payload.action = `${clk}_${direction}_release`;
+                payload.duration = duration;
+            } else {
+                direction = msg.data.movemode === 1 ? 'down' : 'up';
+                payload.action = `${clk}_${direction}_hold`;
+                // store button and start moment
+                store[deviceID].direction = direction;
+                payload.rate = msg.data.rate;
+                store[deviceID].start = Date.now();
+            }
+            return payload;
+        },
+    },
+    CCTSwitch_D0001_colortemp_updown_hold_release: {
+        cluster: 'lightingColorCtrl',
+        type: 'commandMoveColorTemp',
+        convert: (model, msg, publish, options) => {
+            const deviceID = msg.device.ieeeAddr;
+            if (!store[deviceID]) {
+                store[deviceID] = {};
+            }
+            const stop = msg.data.movemode === 0;
+            let direction = null;
+            const clk = 'colortemp';
+            const payload = {click: clk, rate: msg.data.rate};
+            if (stop) {
+                direction = store[deviceID].direction;
+                const duration = Date.now() - store[deviceID].start;
+                payload.action = `${clk}_${direction}_release`;
+                payload.duration = duration;
+            } else {
+                direction = msg.data.movemode === 3 ? 'down' : 'up';
+                payload.action = `${clk}_${direction}_hold`;
+                payload.rate = msg.data.rate;
+                // store button and start moment
+                store[deviceID].direction = direction;
+                store[deviceID].start = Date.now();
+            }
+            return payload;
         },
     },
 
